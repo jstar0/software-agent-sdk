@@ -39,6 +39,48 @@ def test_function_call_and_output_paired():
     assert outs[0]["call_id"] == fcs[0]["call_id"]
 
 
+def test_invalid_historical_responses_ids_are_sanitized_and_paired():
+    raw_call_id = "github_get_file_contents:1"
+    raw_item_id = f"fc_{raw_call_id}"
+    tc = MessageToolCall(
+        id=raw_call_id,
+        responses_item_id=raw_item_id,
+        name="github_get_file_contents",
+        arguments="{}",
+        origin="completion",
+    )
+    messages = [
+        Message(role="assistant", content=[], tool_calls=[tc]),
+        Message(
+            role="tool",
+            tool_call_id=raw_call_id,
+            name="github_get_file_contents",
+            content=[TextContent(text="done")],
+        ),
+    ]
+
+    llm = LLM(model="gpt-5-mini")
+    _, inputs = llm.format_messages_for_responses(messages)
+
+    function_call = next(item for item in inputs if item["type"] == "function_call")
+    function_output = next(
+        item for item in inputs if item["type"] == "function_call_output"
+    )
+    expected_call_id = f"responses_id_{raw_call_id.encode('utf-8').hex()}"
+    expected_item_id = f"responses_id_{raw_item_id.encode('utf-8').hex()}"
+
+    assert function_call["call_id"] == expected_call_id
+    assert function_call["id"] == expected_item_id
+    assert function_output["call_id"] == expected_call_id
+    assert all(
+        char in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+        for item in (function_call, function_output)
+        for key in ("id", "call_id")
+        if (value := item.get(key)) is not None
+        for char in value
+    )
+
+
 def test_system_to_responses_value_instructions_concat():
     m1 = Message(role="system", content=[TextContent(text="A"), TextContent(text="B")])
     m2 = Message(role="system", content=[TextContent(text="C")])

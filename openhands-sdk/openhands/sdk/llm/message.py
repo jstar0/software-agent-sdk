@@ -21,6 +21,20 @@ from openhands.sdk.utils.deprecation import handle_deprecated_model_fields
 logger = get_logger(__name__)
 
 
+_RESPONSES_ID_SAFE_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+)
+
+
+def _sanitize_responses_id(value: str) -> str:
+    """Return an OpenAI Responses-compatible ID without changing valid IDs."""
+    if value and all(char in _RESPONSES_ID_SAFE_CHARS for char in value):
+        return value
+    if not value:
+        return "responses_id_empty"
+    return f"responses_id_{value.encode('utf-8').hex()}"
+
+
 class MessageToolCall(BaseModel):
     """Transport-agnostic tool call representation.
 
@@ -31,7 +45,10 @@ class MessageToolCall(BaseModel):
     id: str = Field(..., description="Canonical tool call id")
     responses_item_id: str | None = Field(
         default=None,
-        description="Original Responses function_call.id, echoed verbatim on replay",
+        description=(
+            "Original Responses function_call.id, preserved when valid and "
+            "sanitized when required by the Responses API"
+        ),
     )
     name: str = Field(..., description="Tool/function name")
     arguments: str = Field(..., description="JSON string of arguments")
@@ -99,11 +116,13 @@ class MessageToolCall(BaseModel):
 
     def to_responses_dict(self) -> dict[str, Any]:
         """Serialize to OpenAI Responses 'function_call' input item format."""
-        # Echo the original function_call.id verbatim when we have it, so
-        # replays stay byte-identical and OpenAI's prefix cache keeps matching.
-        item_id = self.responses_item_id or (
+        raw_item_id = self.responses_item_id or (
             self.id if str(self.id).startswith("fc") else f"fc_{self.id}"
         )
+        # Preserve valid IDs for byte-identical replays, while making historical
+        # IDs from other providers acceptable to the Responses API.
+        item_id = _sanitize_responses_id(raw_item_id)
+        call_id = _sanitize_responses_id(self.id)
         # Responses requires arguments to be a JSON string
         args_str = (
             self.arguments
@@ -113,7 +132,7 @@ class MessageToolCall(BaseModel):
         return {
             "type": "function_call",
             "id": item_id,
-            "call_id": self.id,
+            "call_id": call_id,
             "name": self.name,
             "arguments": args_str,
         }

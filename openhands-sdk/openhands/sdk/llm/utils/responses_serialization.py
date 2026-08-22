@@ -10,6 +10,7 @@ from openhands.sdk.llm.message import (
     Message,
     ReasoningItemModel,
     TextContent,
+    _sanitize_responses_id,
 )
 
 
@@ -135,13 +136,14 @@ def _tool_to_responses_items(
     if message.tool_call_id is None:
         return []
 
+    call_id = _sanitize_responses_id(message.tool_call_id)
     items: list[dict[str, Any]] = []
     for c in message.content:
         if isinstance(c, TextContent):
             items.append(
                 {
                     "type": "function_call_output",
-                    "call_id": message.tool_call_id,
+                    "call_id": call_id,
                     "output": message._maybe_truncate_tool_text(c.text),
                 }
             )
@@ -150,7 +152,7 @@ def _tool_to_responses_items(
                 items.append(
                     {
                         "type": "function_call_output",
-                        "call_id": message.tool_call_id,
+                        "call_id": call_id,
                         "output": [
                             {
                                 "type": "input_image",
