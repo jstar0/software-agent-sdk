@@ -24,6 +24,7 @@ def _setup_workspace_with_mock_client(
     conversation_id: str | None = None,
     fork_id: str | None = None,
     fork_tags: dict[str, str] | None = None,
+    fork_title: str | None = None,
 ) -> tuple[RemoteWorkspace, Mock]:
     """Set up workspace with a mock client that handles create + fork."""
     workspace = RemoteWorkspace(host=host, working_dir="/tmp")
@@ -50,6 +51,7 @@ def _setup_workspace_with_mock_client(
             fork_response: dict[str, object] = {
                 "id": fork_id,
                 "conversation_id": fork_id,
+                "title": fork_title,
                 "tags": fork_tags or {},
             }
             response.json.return_value = fork_response
@@ -88,38 +90,22 @@ def test_remote_fork_sends_post_request(mock_ws_cls: Mock) -> None:
 
 
 @patch("openhands.sdk.conversation.impl.remote_conversation.WebSocketCallbackClient")
-def test_remote_fork_uses_server_returned_tags(mock_ws_cls: Mock) -> None:
-    """The forked RemoteConversation constructor must receive tags from the
-    server response (which merges title), not the raw input kwargs.
-
-    We verify by monkeypatching RemoteConversation to capture the tags kwarg
-    that the fork method passes to the constructor.
-    """
+def test_remote_fork_uses_server_returned_metadata(mock_ws_cls: Mock) -> None:
+    """The forked state reflects the server's top-level title and tags."""
     mock_ws_cls.return_value = Mock()
-    server_tags = {"env": "test", "title": "My Fork"}
-    workspace, _ = _setup_workspace_with_mock_client(fork_tags=server_tags)
+    server_tags = {"env": "test"}
+    server_title = "My Fork"
+    workspace, _ = _setup_workspace_with_mock_client(
+        fork_tags=server_tags,
+        fork_title=server_title,
+    )
 
     conv = RemoteConversation(agent=_agent(), workspace=workspace)
+    fork = conv.fork(title=server_title, tags=server_tags)
 
-    # Capture the kwargs passed to the fork's RemoteConversation()
-    captured_kwargs: dict[str, object] = {}
-    _orig_cls = RemoteConversation
-
-    class _Capture(_orig_cls):
-        def __init__(self, **kwargs: object) -> None:  # type: ignore[override]
-            captured_kwargs.update(kwargs)
-            super().__init__(**kwargs)  # type: ignore[arg-type]
-
-    # Temporarily replace the class reference used by the fork method.
-    import openhands.sdk.conversation.impl.remote_conversation as _mod
-
-    _mod.RemoteConversation = _Capture  # type: ignore[misc]
-    try:
-        conv.fork(title="My Fork", tags={"env": "test"})
-    finally:
-        _mod.RemoteConversation = _orig_cls  # type: ignore[misc]
-
-    assert captured_kwargs.get("tags") == server_tags
+    state = fork.state.model_dump()
+    assert state["title"] == server_title
+    assert state["tags"] == server_tags
 
 
 @patch("openhands.sdk.conversation.impl.remote_conversation.WebSocketCallbackClient")

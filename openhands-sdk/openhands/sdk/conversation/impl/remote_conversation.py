@@ -546,6 +546,11 @@ class RemoteState(ConversationStateProtocol):
             self._cached_state = state
             return state
 
+    def _set_cached_state(self, state: dict) -> None:
+        """Seed the cache with an authoritative conversation response."""
+        with self._lock:
+            self._cached_state = state
+
     def update_state_from_event(self, event: ConversationStateUpdateEvent) -> None:
         """Update cached state from a ConversationStateUpdateEvent."""
         with self._lock:
@@ -1622,11 +1627,11 @@ class RemoteConversation(BaseConversation):
             self.agent.model_dump(context={"expose_secrets": True}),
         )
 
-        # Use server-returned tags (which include merged title) rather than
-        # the input tags, so the client-side object stays consistent.
+        # Use server-returned metadata rather than the input values so the
+        # client-side object stays consistent with the authoritative response.
         server_tags: dict[str, str] | None = fork_info.get("tags") or None
 
-        return RemoteConversation(
+        fork = RemoteConversation(
             agent=fork_agent,
             workspace=self.workspace,
             conversation_id=fork_uuid,
@@ -1634,6 +1639,12 @@ class RemoteConversation(BaseConversation):
             delete_on_close=self.delete_on_close,
             tags=server_tags,
         )
+        # The fork endpoint returns the authoritative ConversationInfo,
+        # including the top-level title. Preserve that response in the new
+        # proxy's state instead of discarding fields that are not constructor
+        # arguments (such as title).
+        fork._state._set_cached_state(fork_info)
+        return fork
 
     def navigate_to(self, event_id: EventID | None) -> None:
         """Move the conversation HEAD to an existing event on the remote server.
